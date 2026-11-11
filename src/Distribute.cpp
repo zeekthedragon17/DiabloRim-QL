@@ -796,6 +796,45 @@ namespace
         }
     };
 
+    // QuickLoot IE can read and take inventory without opening ContainerMenu.
+    // Pre-roll a targeted physical container on crosshair selection, while
+    // retaining the vanilla menu sink as a fallback. No delayed tasks: the
+    // QuickLoot preview can enumerate immediately after the crosshair event.
+    // Repeated events are safe because RollContainer claims the reference.
+    class CrosshairContainerSink final : public RE::BSTEventSink<SKSE::CrosshairRefEvent>
+    {
+    public:
+        static CrosshairContainerSink* GetSingleton()
+        {
+            static CrosshairContainerSink singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(
+            const SKSE::CrosshairRefEvent* a_event,
+            RE::BSTEventSource<SKSE::CrosshairRefEvent>*) override
+        {
+            if (!a_event || !a_event->crosshairRef || !g_enabled.load()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            auto* ref = a_event->crosshairRef.get();
+            // Actor corpses use the existing actor distribution path. Avoid
+            // touching them (or any non-container reference) here.
+            if (!ref || ref->As<RE::Actor>() || !ref->GetContainer()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (Persist::WasRolled(ref->GetFormID())) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            logger::debug("distribute: QuickLoot-compatible crosshair preroll {:08X}",
+                ref->GetFormID());
+            RollContainer(ref, false, true, kMaxItemsPerActor);
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
     // ★CONTAINERS ROLL WHEN OPENED, not when loaded.
     //
     // The load-event path cannot reach them. AffixableItems asks for inventory
@@ -1048,6 +1087,14 @@ void Distribute::Install()
 
     holder->AddEventSink<RE::TESObjectLoadedEvent>(ActorLoadSink::GetSingleton());
     holder->AddEventSink<RE::TESResetEvent>(ResetSink::GetSingleton());
+    // The crosshair sink is the QuickLoot-compatible pre-preview path. Keep
+    // the ContainerMenu sink as a fallback for non-QuickLoot interactions.
+    if (auto* crosshair = SKSE::GetCrosshairRefEventSource()) {
+        crosshair->AddEventSink(CrosshairContainerSink::GetSingleton());
+        logger::info("distribute: crosshair preroll sink installed");
+    } else {
+        logger::warn("distribute: crosshair source unavailable; vanilla menu fallback remains");
+    }
     if (Config::ContainerTrace()) {
         holder->AddEventSink<RE::TESContainerChangedEvent>(TraceSink::GetSingleton());
         logger::warn("distribute: ContainerTrace is ON -- every container open is dumped to "
