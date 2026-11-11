@@ -1,0 +1,57 @@
+name: Build QuickLoot-compatible DiabloRim DLL
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/quickloot-crosshair-preroll
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - '.github/workflows/build-quickloot.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
+          & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
+          "VCPKG_ROOT=$env:RUNNER_TEMP/vcpkg" >> $env:GITHUB_ENV
+      - name: Configure
+        shell: pwsh
+        run: cmake --preset x64-release -DMOD_ROOT="${{ runner.temp }}/nonexistent_mo2_mod"
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset x64-release --parallel 2
+      - name: Assemble MO2 override
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path out/build/x64-release -Filter DiabloInSkyrim.dll -Recurse | Select-Object -First 1
+          if (-not $dll) { throw 'DiabloInSkyrim.dll was not generated' }
+          New-Item -ItemType Directory -Force staging/SKSE/Plugins | Out-Null
+          Copy-Item $dll.FullName staging/SKSE/Plugins/DiabloInSkyrim.dll
+          @'
+          DiabloRim QuickLoot crosshair preroll — experimental build.
+          Install in Mod Organizer 2 as a new mod AFTER the original DiabloRim in the left panel.
+          Contains ONLY the DLL: retain your existing INI and CSV from DiabloRim.
+          Target: Lost Legacy 2 Stock Game / Skyrim 1.6.1170 / SKSE 2.2.6.
+          Test on a backup save. This has NOT been validated in-game.
+          '@ | Set-Content staging/README.txt
+          Compress-Archive -Path staging/* -DestinationPath DiabloRim_QuickLoot_MO2.zip -Force
+      - name: Upload built mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiabloRim-QuickLoot-MO2
+          path: DiabloRim_QuickLoot_MO2.zip
+          if-no-files-found: error
