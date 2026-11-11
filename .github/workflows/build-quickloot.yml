@@ -25,12 +25,19 @@ jobs:
       - name: Bootstrap vcpkg
         shell: pwsh
         run: |
-          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
+          git clone https://github.com/microsoft/vcpkg.git "$env:RUNNER_TEMP/vcpkg"
           & "$env:RUNNER_TEMP/vcpkg/bootstrap-vcpkg.bat" -disableMetrics
           "VCPKG_ROOT=$env:RUNNER_TEMP/vcpkg" >> $env:GITHUB_ENV
+      - name: Locate Ninja
+        shell: pwsh
+        run: |
+          $ninja = (Get-Command ninja.exe -ErrorAction SilentlyContinue).Source
+          if (-not $ninja) { $ninja = "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe" }
+          if (-not (Test-Path $ninja)) { throw "Ninja not available" }
+          "NINJA_EXE=$ninja" >> $env:GITHUB_ENV
       - name: Configure
         shell: pwsh
-        run: cmake --preset x64-release -DMOD_ROOT="${{ runner.temp }}/nonexistent_mo2_mod"
+        run: cmake --preset x64-release -DCMAKE_MAKE_PROGRAM="$env:NINJA_EXE" -DMOD_ROOT="${{ runner.temp }}/nonexistent_mo2_mod"
       - name: Build
         shell: pwsh
         run: cmake --build --preset x64-release --parallel 2
